@@ -1,8 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from .agent.main import process_message
+from .agent.main import process_message, process_message_with_extraction
 import os
+import json
 from dotenv import load_dotenv
 
 # Cargar variables de entorno desde .env si existe
@@ -23,6 +24,8 @@ class WhatsAppMessage(BaseModel):
 
 class LLMResponse(BaseModel):
     """Modelo para la respuesta del LLM"""
+    monto: Optional[float] = None
+    destinatario: Optional[str] = None
     response: str
     wa_id: str
     name: str
@@ -62,20 +65,20 @@ async def receive_whatsapp_message(message: WhatsAppMessage):
                 system_prompt = f.read().strip()
         
         # AQUÍ PUEDES MODIFICAR CÓMO SE CONSTRUYE EL MENSAJE PARA EL LLM
-        # Opción 1: Enviar solo el mensaje del usuario
         user_message = message.message
         
-        # Opción 2: Agregar contexto del usuario al mensaje (descomenta para usar)
-        # user_message = f"Usuario: {message.name} (ID: {message.wa_id})\nMensaje: {message.message}"
+        # Procesar el mensaje y extraer información estructurada
+        result = process_message_with_extraction(user_message, system_prompt)
         
-        # Opción 3: Formato personalizado (descomenta y modifica según necesites)
-        # user_message = f"[WhatsApp] {message.name} dice: {message.message}"
-        
-        # Procesar el mensaje
-        llm_response = process_message(user_message, system_prompt)
+        # Extraer datos de la respuesta
+        monto = result.get("monto")
+        destinatario = result.get("destinatario")
+        response_text = result.get("response", "")
         
         return LLMResponse(
-            response=llm_response,
+            monto=monto,
+            destinatario=destinatario,
+            response=response_text,
             wa_id=message.wa_id,
             name=message.name
         )
@@ -111,18 +114,19 @@ async def receive_whatsapp_message_raw(message: dict):
             with open(system_prompt_path, "r", encoding="utf-8") as f:
                 system_prompt = f.read().strip()
         
-        # AQUÍ PUEDES MODIFICAR CÓMO SE CONSTRUYE EL MENSAJE PARA EL LLM
-        # Opción 1: Enviar solo el mensaje del usuario
+        # Procesar el mensaje y extraer información estructurada
         user_message = message_text
+        result = process_message_with_extraction(user_message, system_prompt)
         
-        # Opción 2: Agregar contexto del usuario al mensaje (descomenta para usar)
-        # user_message = f"Usuario: {name} (ID: {wa_id})\nMensaje: {message_text}"
-        
-        # Procesar el mensaje
-        llm_response = process_message(user_message, system_prompt)
+        # Extraer datos de la respuesta
+        monto = result.get("monto")
+        destinatario = result.get("destinatario")
+        response_text = result.get("response", "")
         
         return {
-            "response": llm_response,
+            "monto": monto,
+            "destinatario": destinatario,
+            "response": response_text,
             "wa_id": wa_id,
             "name": name
         }

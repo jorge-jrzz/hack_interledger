@@ -41,7 +41,7 @@ def test_whatsapp_api():
     payload = {
         "wa_id": "5215513076942",
         "name": "Yorch Juárez",
-        "message": "Hola quiero que le pagues 50 pesos a esta cuenta 123456789",
+        "message": "Hola quiero que le pagues cuarenta y sinco  pesos a esta cuenta 123456789",
     }
     
     url = "http://localhost:8000/webhook/whatsapp"
