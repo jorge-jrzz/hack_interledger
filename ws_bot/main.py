@@ -3,6 +3,7 @@ import os
 from pywa_async import WhatsApp, types
 from dotenv import load_dotenv
 from fastapi import FastAPI
+import httpx
 
 
 load_dotenv()
@@ -17,13 +18,18 @@ wa = WhatsApp(
     app_id=os.getenv('META_APP_ID'),
     app_secret=os.getenv('META_APP_SECRET')
 )
+llm_client = httpx.AsyncClient()
 
 @wa.on_message
 async def hello(_: WhatsApp, msg: types.Message):
-    if msg.image:
+    if msg.type == "image":
         await msg.react("❤️")
+        await msg.download_media(filepath="downloads/", filename="yopo.jpg")
         await msg.reply("Nice image!")
-    else:
+    elif msg.type == "text":
         await msg.react("👋")
         print(f"Message from {msg.from_user}: {msg.text} \n Metadata: {msg.metadata} \n ID: {msg.id}")
         await msg.reply("Hello from Paguito!")
+        response = await llm_client.get("http://localhost:8001/chat")
+        data = response.json()
+        await msg.reply(f"LLM says: {data['response']}")
