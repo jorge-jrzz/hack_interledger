@@ -9,7 +9,7 @@ COPY op/package*.json ./
 RUN npm ci --only=production
 
 # Copy application code
-COPY op/. /app
+COPY op/. .
 
 EXPOSE 3000
 

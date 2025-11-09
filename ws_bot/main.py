@@ -1,3 +1,4 @@
+import asyncio
 import os
 from pathlib import Path
 
@@ -10,7 +11,8 @@ from pywa.types import (
     SectionList,
     Section,
     SectionRow,
-    CallbackSelection
+    CallbackSelection,
+    URLButton
 )
 from fastapi import FastAPI
 from dotenv import load_dotenv
@@ -21,13 +23,14 @@ from config_env import fetch_and_write_env_and_key
 
 fetch_and_write_env_and_key()
 load_dotenv()
-CALLBACK_URL = "https://de7769004bf7.ngrok-free.app"
+CALLBACK_URL = "https://626d5d3da445.ngrok-free.app"
 # LLM_BACKEND = "http://localhost:8000/webhook/whatsapp" # LLM backend URL in localhost
 LLM_BACKEND = "http://llm_backend:8000/webhook/whatsapp" # LLM backend URL in docker container environment
+OP_BACKEND = "http://open_payments_api:3000" # Open Payments API URL in docker container environment
 
 fastapi_app = FastAPI()
 fastapi_app.mount("/downloads", StaticFiles(directory="./downloads"), name="downloads")
-llm_client = httpx.AsyncClient()
+back_client = httpx.AsyncClient()
 wa = WhatsApp(
     phone_id=os.getenv('META_PHONE_ID'),
     token=os.getenv('META_ACCESS_TOKEN'),
@@ -50,6 +53,42 @@ OTHER_LANGUAGES = {
     "pt": ("Português", "🇵🇹"),
     "ja": ("日本語", "🇯🇵"),
 }
+
+
+async def confirm_payment_with_op_api(msg: Message, llm_response: str, payment_commit: dict, number_notify: str):
+    payment_url = payment_commit.get("confirmationUrl", "")
+    payment_id = payment_commit.get("paymentId", "")
+    await msg.reply(
+        text=llm_response,
+        buttons=URLButton(
+            title="Confirm Payment",
+            url=payment_url
+        )
+    )
+    confirmation_payload = {
+        "paymentId": payment_id
+    }
+    confirm_success = False
+    confirm_data = {}
+    while not confirm_success:
+        try:
+            confirm_response = await back_client.post(
+                url=f"{OP_BACKEND}/confirm-payment",
+                json=confirmation_payload,
+                timeout=60.0
+            )
+            confirm_data = confirm_response.json()
+            confirm_success = confirm_data.get("success") is True
+            if not confirm_success:
+                await asyncio.sleep(1)
+        except httpx.HTTPError as exc:
+            print(f"Error confirming payment {payment_id}: {exc}")
+            await asyncio.sleep(2)
+    await msg.reply_text("Payment confirmed ✅. Thank you for using Paguito! 🫰")
+    await wa.send_text(
+        to=number_notify,
+        text=f"Payment confirmed 💰\n*sender*: {msg.from_user.name}"
+    )
 
 
 @wa.on_message(filters.contains("Hello", "Hi", "Hola", ignore_case=True))
@@ -116,7 +155,11 @@ You can do this via voice note or a regular text message."""
         )
         await clb.reply_text(text="Feel free to choose how you make the request! 🤠")
     elif action == "tickets":
-        await clb.reply_text(text="Pay for services action")
+        await clb.reply_text(
+            text="""Okay, now tell me the service and the amount you want to pay.
+You can do this via voice note, regular text message or by sending an image of the bill."""
+        )
+        await clb.reply_text(text="Feel free to choose how you make the request! 🤠")
     elif action == "check":
         await clb.reply_text(text="Check transactions action")
 
@@ -138,7 +181,7 @@ async def reply_audio(_: WhatsApp, msg: Message):
             }
         ]
     }
-    response = await llm_client.post(url=LLM_BACKEND, json=payload, timeout=60.0)
+    response = await back_client.post(url=LLM_BACKEND, json=payload, timeout=60.0)
     data = response.json()
     await msg.reply(data['response'])
 
@@ -160,9 +203,26 @@ async def reply_image(_: WhatsApp, msg: Message):
             }
         ]
     }
-    response = await llm_client.post(url=LLM_BACKEND, json=payload, timeout=60.0)
-    data = response.json()
-    await msg.reply(data['response'])
+    try:
+        response = await back_client.post(
+            url=LLM_BACKEND,
+            json=payload,
+            timeout=60.0
+        )
+        data = response.json()
+    except httpx.ReadTimeout:
+        await msg.reply_text("I'm still processing your request. Please try again in a few seconds.")
+        print("LLM backend request timed out for message:", msg.text)
+        return
+    except httpx.HTTPError as exc:
+        await msg.reply_text("I ran into a technical issue. Please try again shortly.")
+        print(f"LLM backend request failed: {exc}")
+        return
+    print(f"LLM response data: {data}")
+    llm_response = data.get("response", "")
+    payment_commit = data.get("payment_confirmation", None)
+    if payment_commit:
+        await confirm_payment_with_op_api(msg, llm_response, payment_commit, "5639228716")
 
 
 @wa.on_message(filters.text)
@@ -174,9 +234,27 @@ async def echo(_: WhatsApp, msg: Message):
         "message": msg.text,
         "media": []
     }
-    response = await llm_client.post(url=LLM_BACKEND, json=payload)
-    data = response.json()
-    await msg.reply(data['response'])
+    try:
+        response = await back_client.post(
+            url=LLM_BACKEND,
+            json=payload,
+            timeout=60.0
+        )
+        data = response.json()
+    except httpx.ReadTimeout:
+        await msg.reply_text("I'm still processing your request. Please try again in a few seconds.")
+        print("LLM backend request timed out for message:", msg.text)
+        return
+    except httpx.HTTPError as exc:
+        await msg.reply_text("I ran into a technical issue. Please try again shortly.")
+        print(f"LLM backend request failed: {exc}")
+        return
+    print(f"LLM response data: {data}")
+    llm_response = data.get("response", "")
+    payment_commit = data.get("payment_confirmation", None)
+    if payment_commit:
+        await confirm_payment_with_op_api(msg, llm_response, payment_commit, "5513076942")
+
 
 @wa.on_message(filters.contacts)
 async def reply_contacts(_: WhatsApp, msg: Message):

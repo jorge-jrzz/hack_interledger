@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from .agent.main import process_message_with_extraction, get_client
-from .payment import send_payment, DEFAULT_ASSET_CODE, DEFAULT_ASSET_SCALE
+from .payment import send_payment_async, DEFAULT_ASSET_CODE, DEFAULT_ASSET_SCALE
 import os
 import json
 import time
@@ -13,7 +13,8 @@ from dotenv import load_dotenv
 import requests
 
 # Cargar variables de entorno desde .env si existe
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+project_root = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "../../../"))
 env_path = os.path.join(project_root, ".env")
 load_dotenv(env_path)
 
@@ -204,6 +205,8 @@ def _normalize_account_text(value: str) -> str:
     return value.strip()
 
 # file:///Users/misaelalvarezcamarillo/Desktop/misil.jpg
+
+
 def _analyze_image(source: str) -> Dict[str, Any]:
     image_info = _encode_image_to_base64(source)
     prompt = (
@@ -273,7 +276,7 @@ def _load_system_prompt() -> Optional[str]:
     return None
 
 
-def _handle_whatsapp_message(
+async def _handle_whatsapp_message(
     wa_id: str,
     name: str,
     message: str,
@@ -315,8 +318,10 @@ def _handle_whatsapp_message(
         if monto is not None:
             summary_parts.append(f"un monto aproximado de ${monto:,.2f}")
         if destinatario:
-            summary_parts.append(f"una cuenta o wallet con número {destinatario}")
-        summary = ", ".join(summary_parts) if summary_parts else "sin datos claros"
+            summary_parts.append(
+                f"una cuenta o wallet con número {destinatario}")
+        summary = ", ".join(
+            summary_parts) if summary_parts else "sin datos claros"
         user_message = (
             "El usuario envió un ticket de compra. "
             f"Se identificó {summary}. "
@@ -334,8 +339,10 @@ def _handle_whatsapp_message(
         if monto is not None:
             summary_parts.append(f"un monto aproximado de ${monto:,.2f}")
         if destinatario:
-            summary_parts.append(f"una cuenta o wallet con número {destinatario}")
-        summary = ", ".join(summary_parts) if summary_parts else "sin datos claros"
+            summary_parts.append(
+                f"una cuenta o wallet con número {destinatario}")
+        summary = ", ".join(
+            summary_parts) if summary_parts else "sin datos claros"
         user_message = (
             "El usuario envió un ticket de compra. "
             f"Se identificó {summary}. "
@@ -359,7 +366,8 @@ def _handle_whatsapp_message(
         additions.append(f"cuenta {destinatario}")
     if additions:
         response_text = response_text.rstrip(". ")
-        response_text += ". " + " ".join(f"Confirmo {item}." for item in additions)
+        response_text += ". " + \
+            " ".join(f"Confirmo {item}." for item in additions)
 
     response_payload: Dict[str, Any] = {
         "monto": monto,
@@ -374,12 +382,14 @@ def _handle_whatsapp_message(
     }
 
     if audio_input and response_payload["response"]:
-        response_payload["audio_url"] = _synthesize_audio_response(response_payload["response"])
+        response_payload["audio_url"] = _synthesize_audio_response(
+            response_payload["response"])
 
     if monto is not None and destinatario:
         try:
             amount_major = float(monto)
-            amount_value = str(int(round(amount_major * (10 ** DEFAULT_ASSET_SCALE))))
+            amount_value = str(
+                int(round(amount_major * (10 ** DEFAULT_ASSET_SCALE))))
         except (ValueError, TypeError):
             amount_value = str(monto)
         payment_payload = {
@@ -390,10 +400,11 @@ def _handle_whatsapp_message(
             "assetScale": DEFAULT_ASSET_SCALE,
         }
         response_payload["payment_payload"] = payment_payload
-        payment_result = send_payment(payment_payload)
+        payment_result = await send_payment_async(payment_payload)
         response_payload["payment_status"] = payment_result
 
-        confirmation = payment_result.get("service_response") if isinstance(payment_result, dict) else None
+        confirmation = payment_result.get("service_response") if isinstance(
+            payment_result, dict) else None
         if confirmation and isinstance(confirmation, dict):
             response_payload["payment_confirmation"] = confirmation
 
@@ -425,7 +436,7 @@ async def verify_webhook(
 async def receive_whatsapp_message(message: WhatsAppMessage):
     """
     Endpoint para recibir mensajes de WhatsApp y procesarlos con el LLM.
-    
+
     Ejemplo de uso:
     {
         "wa_id": "5215513076942",
@@ -439,16 +450,17 @@ async def receive_whatsapp_message(message: WhatsAppMessage):
         if message.media:
             media_payload = [item.dict() for item in message.media]
 
-        response_payload = _handle_whatsapp_message(
+        response_payload = await _handle_whatsapp_message(
             wa_id=message.wa_id,
             name=message.name,
             message=message.message,
             media=media_payload,
         )
         return LLMResponse(**response_payload)
-    
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error processing message: {str(e)}")
 
 
 @app.post("/webhook/whatsapp/raw")
@@ -462,11 +474,12 @@ async def receive_whatsapp_message_raw(message: dict):
         wa_id = message.get("wa_id", "unknown")
         name = message.get("name", "Unknown User")
         message_text = message.get("message", "")
-        
+
         if not message_text:
-            raise HTTPException(status_code=400, detail="Message content is required")
+            raise HTTPException(
+                status_code=400, detail="Message content is required")
         media_payload = message.get("media")
-        response_payload = _handle_whatsapp_message(
+        response_payload = await _handle_whatsapp_message(
             wa_id=wa_id,
             name=name,
             message=message_text,
@@ -474,7 +487,7 @@ async def receive_whatsapp_message_raw(message: dict):
         )
 
         return response_payload
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
 
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error processing message: {str(e)}")

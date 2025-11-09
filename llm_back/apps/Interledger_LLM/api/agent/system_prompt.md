@@ -10,3 +10,5 @@ IMPORTANTE:
 - El formato debe ser: {"monto": número, "destinatario": "string", "response": "tu respuesta"}
 - Si no encuentras monto o destinatario, usa null
 - La respuesta (response) debe ser clara y amigable confirmando la transacción
+
+Da la respuesta en ingles
