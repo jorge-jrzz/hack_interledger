@@ -12,6 +12,7 @@ from pywa.types import (
 )
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 import httpx
 
 
@@ -20,6 +21,8 @@ CALLBACK_URL = "https://4b0ca75fffaf.ngrok-free.app"
 LLM_BACKEND = "https://shaun-nondiffident-ravishingly.ngrok-free.dev/webhook/whatsapp"
 
 fastapi_app = FastAPI()
+fastapi_app.mount("/downloads", StaticFiles(directory="./downloads"), name="downloads")
+llm_client = httpx.AsyncClient()
 wa = WhatsApp(
     phone_id=os.getenv('META_PHONE_ID'),
     token=os.getenv('META_ACCESS_TOKEN'),
@@ -29,9 +32,6 @@ wa = WhatsApp(
     app_id=os.getenv('META_APP_ID'),
     app_secret=os.getenv('META_APP_SECRET')
 )
-
-
-llm_client = httpx.AsyncClient()
 
 POPULAR_LANGUAGES = {
     "en": ("English", "🇺🇸"),
@@ -45,6 +45,7 @@ OTHER_LANGUAGES = {
     "pt": ("Português", "🇵🇹"),
     "ja": ("日本語", "🇯🇵"),
 }
+
 
 @wa.on_message(filters.contains("Hello", "Hi", "Hola", ignore_case=True))
 async def hello(_: WhatsApp, msg: Message):
@@ -78,6 +79,7 @@ async def hello(_: WhatsApp, msg: Message):
         )
     )
 
+
 @wa.on_callback_selection(filters.startswith('language:'))
 async def select_action(_: WhatsApp, sel: CallbackSelection):
     await sel.reply_text(
@@ -98,6 +100,7 @@ async def select_action(_: WhatsApp, sel: CallbackSelection):
         ]
     )
 
+
 @wa.on_callback_button(filters.startswith('action:'))
 async def perform_action(_: WhatsApp, clb: CallbackButton):
     action = clb.data.split(':')[-1]
@@ -112,6 +115,7 @@ You can do this via voice note or a regular text message."""
     elif action == "check":
         await clb.reply_text(text="Check transactions action")
 
+
 @wa.on_message(filters.audio)
 async def reply_audio(_: WhatsApp, msg: Message):
     await msg.reply("Audio received! 🎵")
@@ -119,20 +123,38 @@ async def reply_audio(_: WhatsApp, msg: Message):
     media_path = await msg.download_media(filepath="downloads/audios/", filename=f"{audio_id}.mp3")
     print(f"Audio saved as {media_path}")
 
+
 @wa.on_message(filters.image)
 async def reply_image(_: WhatsApp, msg: Message):
     await msg.reply("Image received! 🖼️")
     image_id = msg.image.id
     media_path = await msg.download_media(filepath="downloads/images/", filename=f"{image_id}.jpg")
     print(f"Image saved as {media_path}")
+    payload = {
+        "wa_id": msg.from_user.wa_id,
+        "name": msg.from_user.name,
+        "message": msg.caption if msg.caption else "",
+        "media": [
+            {
+                "type": "image",
+                "url": f"{CALLBACK_URL}/{media_path}"
+            }
+        ]
+    }
+    response = await llm_client.post(url=LLM_BACKEND, json=payload, timeout=60.0)
+    data = response.json()
+    await msg.reply(data['response'])
+
 
 @wa.on_message(filters.text)
 async def echo(_: WhatsApp, msg: Message):
     await msg.react("🤖")
-    response = await llm_client.post(url=LLM_BACKEND, json={
+    payload = {
         "wa_id": msg.from_user.wa_id,
         "name": msg.from_user.name,
-        "message": msg.text
-    })
+        "message": msg.text,
+        "media": []
+    }
+    response = await llm_client.post(url=LLM_BACKEND, json=payload)
     data = response.json()
     await msg.reply(data['response'])
