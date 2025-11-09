@@ -13,3 +13,8 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "pywa[fastapi]>=3.4.0",
 ]
+
+[dependency-groups]
+dev = [
+    "marimo>=0.17.7",
+]
