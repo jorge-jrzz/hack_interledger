@@ -16,49 +16,64 @@ export async function fetchAndWriteEnvAndKey() {
         try {
           const json = JSON.parse(data);
           let envContent = '';
-          
-          // Try to write private.key, handle read-only filesystem
+
+          // Write private.key
           if ('private_key' in json) {
             const privateKey = json['private_key'];
             const privateKeyPath = process.env.PRIVATE_KEY_PATH || 'private.key';
-            
-            // Only write if file doesn't exist
-            if (!fs.existsSync(privateKeyPath)) {
-              try {
-                fs.writeFileSync(privateKeyPath, privateKey);
-                console.log(`private.key created at ${privateKeyPath}`);
-              } catch (writeError) {
-                if (writeError.code === 'EROFS' || writeError.code === 'EACCES') {
-                  console.warn(`Cannot write ${privateKeyPath}: filesystem is read-only. Make sure private.key is mounted as volume.`);
-                  // Store in environment variable as fallback
-                  process.env.PRIVATE_KEY_CONTENT = privateKey;
-                } else {
-                  throw writeError;
-                }
+
+            try {
+              fs.writeFileSync(privateKeyPath, privateKey, { mode: 0o600 });
+              console.log(`private.key written successfully at ${privateKeyPath}`);
+            } catch (writeError) {
+              if (writeError.code === 'EROFS' || writeError.code === 'EACCES') {
+                console.warn(`Cannot write ${privateKeyPath}: filesystem is read-only. Make sure private.key is mounted as volume.`);
+                // Store in environment variable as fallback
+                process.env.PRIVATE_KEY_CONTENT = privateKey;
+              } else {
+                throw writeError;
               }
-            } else {
-              console.log(`private.key already exists at ${privateKeyPath}, skipping write`);
             }
             delete json['private_key'];
           }
-          
-          // Try to write .env, handle read-only filesystem
+
+          // Write .env file with all other variables
           Object.keys(json).forEach(key => {
-            envContent += `${key}=${json[key]}\n`;
+            const value = json[key];
+            // Convert value to string and escape if necessary
+            let envValue = String(value);
+            // If value contains spaces, quotes, or special characters, wrap in quotes
+            if (envValue.includes(' ') || envValue.includes('"') || envValue.includes("'") || envValue.includes('\n')) {
+              // Escape quotes and wrap in double quotes
+              envValue = `"${envValue.replace(/"/g, '\\"')}"`;
+            }
+            envContent += `${key}=${envValue}\n`;
           });
-          
+
           try {
             if (envContent.trim()) {
-              fs.writeFileSync('.env', envContent);
+              // Write .env file with proper encoding
+              fs.writeFileSync('.env', envContent, { mode: 0o644, encoding: 'utf8' });
+              console.log('.env written successfully');
+              console.log(`Variables written: ${Object.keys(json).join(', ')}`);
             }
-            dotenv.config();
-            console.log('Configuration loaded successfully');
+            
+            // Set environment variables directly in process.env (important for Docker)
+            Object.keys(json).forEach(key => {
+              process.env[key] = String(json[key]);
+            });
+            
+            // Reload dotenv to ensure all variables are available
+            dotenv.config({ override: true });
+            
             resolve();
           } catch (writeError) {
             if (writeError.code === 'EROFS' || writeError.code === 'EACCES') {
-              // Filesystem is read-only, but we can still load env vars from process.env
-              console.log('Cannot write .env: filesystem is read-only. Using environment variables if available.');
-              dotenv.config();
+              console.warn('Cannot write .env: filesystem is read-only. Using environment variables directly.');
+              // Set environment variables directly
+              Object.keys(json).forEach(key => {
+                process.env[key] = String(json[key]);
+              });
               resolve();
             } else {
               throw writeError;
@@ -76,4 +91,3 @@ export async function fetchAndWriteEnvAndKey() {
     });
   });
 }
-
