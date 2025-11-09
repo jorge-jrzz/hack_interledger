@@ -29,6 +29,7 @@ class LLMResponse(BaseModel):
     response: str
     wa_id: str
     name: str
+    audio_url: Optional[str] = None  # URL del audio si la entrada era audio
 
 
 @app.get("/")
