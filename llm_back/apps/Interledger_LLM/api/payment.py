@@ -7,7 +7,7 @@ from typing import Dict, Any
 import requests
 
 
-PAYMENT_SERVICE_URL = os.getenv("PAYMENT_SERVICE_URL")
+PAYMENT_SERVICE_URL = "http://localhost:3000/send-payment"
 DEFAULT_ASSET_CODE = os.getenv("PAYMENT_ASSET_CODE", "MX")
 DEFAULT_ASSET_SCALE = int(os.getenv("PAYMENT_ASSET_SCALE", "2"))
 

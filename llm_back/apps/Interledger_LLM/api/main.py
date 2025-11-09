@@ -47,6 +47,7 @@ class LLMResponse(BaseModel):
     image_analysis: Optional[Dict[str, Any]] = None
     payment_payload: Optional[Dict[str, Any]] = None
     payment_status: Optional[Dict[str, Any]] = None
+    payment_confirmation: Optional[Dict[str, Any]] = None
 
 
 AUDIO_OUTPUT_DIR = Path(__file__).resolve().parent / "audio_responses"
@@ -212,7 +213,7 @@ def _analyze_image(source: str) -> Dict[str, Any]:
         '  "destinatario": "string"\n'
         "}\n"
         "- \"monto\" debe ser un número (sin símbolo de moneda).\n"
-        "- \"destinatario\" debe ser el número de cuenta o wallet representado únicamente con dígitos (ej: \"123456\").\n"
+        "- \"destinatario\" debe ser el número de cuenta o link de wallet/billetera"
         "- No escribas números con palabras; siempre usa dígitos.\n"
         "- Si no encuentras alguno de los datos, usa null.\n"
         "- No incluyas texto adicional fuera del JSON.\n"
@@ -378,14 +379,9 @@ def _handle_whatsapp_message(
     if monto is not None and destinatario:
         try:
             amount_major = float(monto)
+            amount_value = str(int(round(amount_major * (10 ** DEFAULT_ASSET_SCALE))))
         except (ValueError, TypeError):
-            amount_major = None
-
-        if amount_major is not None:
-            amount_value = str(int(round(amount_major)))
-        else:
             amount_value = str(monto)
-
         payment_payload = {
             "senderWalletUrl": wa_id,
             "receiverWalletUrl": destinatario,
@@ -394,7 +390,12 @@ def _handle_whatsapp_message(
             "assetScale": DEFAULT_ASSET_SCALE,
         }
         response_payload["payment_payload"] = payment_payload
-        response_payload["payment_status"] = send_payment(payment_payload)
+        payment_result = send_payment(payment_payload)
+        response_payload["payment_status"] = payment_result
+
+        confirmation = payment_result.get("service_response") if isinstance(payment_result, dict) else None
+        if confirmation and isinstance(confirmation, dict):
+            response_payload["payment_confirmation"] = confirmation
 
     return response_payload
 
