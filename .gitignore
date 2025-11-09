@@ -152,7 +152,6 @@ __pycache__/
 build/
 develop-eggs/
 dist/
-downloads/
 eggs/
 .eggs/
 lib/
@@ -484,6 +483,12 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Do not install node modules
-node_modules
+# Private key files
 private.key
+
+# MacOS
+.DS_Store
+
+# Project local files
+*.mp3
+*.jpg
