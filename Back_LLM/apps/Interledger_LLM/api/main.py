@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from .agent.main import process_message_with_extraction, get_client
+from .payment import send_payment, DEFAULT_ASSET_CODE, DEFAULT_ASSET_SCALE
 import os
 import json
 import time
@@ -21,12 +22,18 @@ app = FastAPI(title="WhatsApp LLM API", version="1.0.0")
 VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "whatsapp-verify-token")
 
 
+class MediaItem(BaseModel):
+    type: str
+    source: str
+
+
 class WhatsAppMessage(BaseModel):
     """Modelo para recibir mensajes de WhatsApp"""
     wa_id: str
     name: str
     message: str
     identity_key_hash: Optional[str] = None
+    media: Optional[List[MediaItem]] = None
 
 
 class LLMResponse(BaseModel):
@@ -38,6 +45,8 @@ class LLMResponse(BaseModel):
     name: str
     audio_url: Optional[str] = None  # URL del audio si la entrada era audio
     image_analysis: Optional[Dict[str, Any]] = None
+    payment_payload: Optional[Dict[str, Any]] = None
+    payment_status: Optional[Dict[str, Any]] = None
 
 
 AUDIO_OUTPUT_DIR = Path(__file__).resolve().parent / "audio_responses"
@@ -159,6 +168,41 @@ def _parse_json_text(text: str) -> Dict[str, Any]:
         return {}
 
 
+SPANISH_NUMBER_MAP = {
+    "cero": "0",
+    "uno": "1",
+    "una": "1",
+    "dos": "2",
+    "tres": "3",
+    "cuatro": "4",
+    "cinco": "5",
+    "seis": "6",
+    "siete": "7",
+    "ocho": "8",
+    "nueve": "9",
+    "diez": "10",
+}
+
+
+def _normalize_account_text(value: str) -> str:
+    words = value.lower().strip().split()
+    digits: List[str] = []
+
+    for w in words:
+        w_clean = "".join(ch for ch in w if ch.isalnum())
+        if not w_clean:
+            continue
+        if w_clean.isdigit():
+            digits.append(w_clean)
+        elif w_clean in SPANISH_NUMBER_MAP:
+            digits.append(SPANISH_NUMBER_MAP[w_clean])
+
+    if digits:
+        return "".join(digits)
+
+    return value.strip()
+
+# file:///Users/misaelalvarezcamarillo/Desktop/misil.jpg
 def _analyze_image(source: str) -> Dict[str, Any]:
     image_info = _encode_image_to_base64(source)
     prompt = (
@@ -168,7 +212,8 @@ def _analyze_image(source: str) -> Dict[str, Any]:
         '  "destinatario": "string"\n'
         "}\n"
         "- \"monto\" debe ser un número (sin símbolo de moneda).\n"
-        "- \"destinatario\" debe ser el número de cuenta o wallet (solo dígitos si es posible).\n"
+        "- \"destinatario\" debe ser el número de cuenta o wallet representado únicamente con dígitos (ej: \"123456\").\n"
+        "- No escribas números con palabras; siempre usa dígitos.\n"
         "- Si no encuentras alguno de los datos, usa null.\n"
         "- No incluyas texto adicional fuera del JSON.\n"
         "- Si hay múltiples números, elige el que represente la cuenta/wallet."
@@ -210,8 +255,7 @@ def _analyze_image(source: str) -> Dict[str, Any]:
         monto = None
 
     if isinstance(destinatario, str):
-        digits = "".join(ch for ch in destinatario if ch.isdigit())
-        destinatario = digits or destinatario.strip() or None
+        destinatario = _normalize_account_text(destinatario) or None
 
     return {"monto": monto, "destinatario": destinatario}
 
@@ -228,15 +272,56 @@ def _load_system_prompt() -> Optional[str]:
     return None
 
 
-def _handle_whatsapp_message(wa_id: str, name: str, message: str) -> Dict[str, Any]:
+def _handle_whatsapp_message(
+    wa_id: str,
+    name: str,
+    message: str,
+    media: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
     system_prompt = _load_system_prompt()
 
-    user_message = message
+    user_message = message or ""
     audio_input = False
     image_input = False
     image_analysis: Optional[Dict[str, Any]] = None
+    selected_media_type = None
+    selected_media_url = None
 
-    if _is_audio_source(message):
+    if media:
+        for item in media:
+            media_type = item.get("type", "").lower()
+            media_url = item.get("source")
+            if not media_url:
+                continue
+            if media_type in ("audio", "voice"):
+                selected_media_type = "audio"
+                selected_media_url = media_url
+                break
+            if media_type == "image":
+                selected_media_type = "image"
+                selected_media_url = media_url
+                break
+
+    if selected_media_type == "audio":
+        audio_input = True
+        user_message = _transcribe_audio(selected_media_url)
+    elif selected_media_type == "image":
+        image_input = True
+        image_analysis = _analyze_image(selected_media_url)
+        summary_parts = []
+        monto = image_analysis.get("monto")
+        destinatario = image_analysis.get("destinatario")
+        if monto is not None:
+            summary_parts.append(f"un monto aproximado de ${monto:,.2f}")
+        if destinatario:
+            summary_parts.append(f"una cuenta o wallet con número {destinatario}")
+        summary = ", ".join(summary_parts) if summary_parts else "sin datos claros"
+        user_message = (
+            "El usuario envió un ticket de compra. "
+            f"Se identificó {summary}. "
+            "Confirma la transacción al usuario con un mensaje claro."
+        )
+    elif _is_audio_source(message):
         audio_input = True
         user_message = _transcribe_audio(message)
     elif _is_image_source(message):
@@ -263,9 +348,7 @@ def _handle_whatsapp_message(wa_id: str, name: str, message: str) -> Dict[str, A
 
     # Normalizar destinatario a dígitos si es posible
     if isinstance(destinatario, str):
-        digits = "".join(ch for ch in destinatario if ch.isdigit())
-        if digits:
-            destinatario = digits
+        destinatario = _normalize_account_text(destinatario) or None
 
     # Ajustar la respuesta para asegurarnos de que incluya los datos numéricos
     additions = []
@@ -285,10 +368,33 @@ def _handle_whatsapp_message(wa_id: str, name: str, message: str) -> Dict[str, A
         "name": name,
         "audio_url": None,
         "image_analysis": image_analysis,
+        "payment_payload": None,
+        "payment_status": None,
     }
 
     if audio_input and response_payload["response"]:
         response_payload["audio_url"] = _synthesize_audio_response(response_payload["response"])
+
+    if monto is not None and destinatario:
+        try:
+            amount_major = float(monto)
+        except (ValueError, TypeError):
+            amount_major = None
+
+        if amount_major is not None:
+            amount_value = str(int(round(amount_major)))
+        else:
+            amount_value = str(monto)
+
+        payment_payload = {
+            "senderWalletUrl": wa_id,
+            "receiverWalletUrl": destinatario,
+            "amount": amount_value,
+            "assetCode": DEFAULT_ASSET_CODE,
+            "assetScale": DEFAULT_ASSET_SCALE,
+        }
+        response_payload["payment_payload"] = payment_payload
+        response_payload["payment_status"] = send_payment(payment_payload)
 
     return response_payload
 
@@ -328,10 +434,15 @@ async def receive_whatsapp_message(message: WhatsAppMessage):
     }
     """
     try:
+        media_payload = None
+        if message.media:
+            media_payload = [item.dict() for item in message.media]
+
         response_payload = _handle_whatsapp_message(
             wa_id=message.wa_id,
             name=message.name,
             message=message.message,
+            media=media_payload,
         )
         return LLMResponse(**response_payload)
     
@@ -353,10 +464,12 @@ async def receive_whatsapp_message_raw(message: dict):
         
         if not message_text:
             raise HTTPException(status_code=400, detail="Message content is required")
+        media_payload = message.get("media")
         response_payload = _handle_whatsapp_message(
             wa_id=wa_id,
             name=name,
             message=message_text,
+            media=media_payload,
         )
 
         return response_payload
