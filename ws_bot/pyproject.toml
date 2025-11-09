@@ -1,0 +1,20 @@
+[project]
+name = "ws-bot"
+version = "0.1.0"
+description = "Bot de WhatsApp para realizar pagos entre diferentes divisas"
+authors = [
+  {name = "Jorge Juárez", email = "jorgeang33@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.121.0",
+    "httpx>=0.28.1",
+    "python-dotenv>=1.2.1",
+    "pywa[fastapi]>=3.4.0",
+]
+
+[dependency-groups]
+dev = [
+    "marimo>=0.17.7",
+]
