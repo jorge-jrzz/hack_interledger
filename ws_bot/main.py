@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+import httpx
 from pywa_async import WhatsApp, filters
 from pywa.types import (
     Message,
@@ -11,14 +12,16 @@ from pywa.types import (
     SectionRow,
     CallbackSelection
 )
-from dotenv import load_dotenv
 from fastapi import FastAPI
+from dotenv import load_dotenv
 from fastapi.staticfiles import StaticFiles
-import httpx
+
+from config_env import fetch_and_write_env_and_key
 
 
+fetch_and_write_env_and_key()
 load_dotenv()
-CALLBACK_URL = "https://4b0ca75fffaf.ngrok-free.app"
+CALLBACK_URL = "https://560f141a9f77.ngrok-free.app"
 LLM_BACKEND = "https://shaun-nondiffident-ravishingly.ngrok-free.dev/webhook/whatsapp"
 
 fastapi_app = FastAPI()
