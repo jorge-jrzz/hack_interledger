@@ -23,7 +23,7 @@ from config_env import fetch_and_write_env_and_key
 
 fetch_and_write_env_and_key()
 load_dotenv()
-CALLBACK_URL = "https://626d5d3da445.ngrok-free.app"
+CALLBACK_URL = "https://a30d1016279e.ngrok-free.app"
 # LLM_BACKEND = "http://localhost:8000/webhook/whatsapp" # LLM backend URL in localhost
 LLM_BACKEND = "http://llm_backend:8000/webhook/whatsapp" # LLM backend URL in docker container environment
 OP_BACKEND = "http://open_payments_api:3000" # Open Payments API URL in docker container environment
@@ -223,6 +223,8 @@ async def reply_image(_: WhatsApp, msg: Message):
     payment_commit = data.get("payment_confirmation", None)
     if payment_commit:
         await confirm_payment_with_op_api(msg, llm_response, payment_commit, "5639228716")
+    if llm_response and not payment_commit:
+        await msg.reply_text(llm_response)
 
 
 @wa.on_message(filters.text)
@@ -254,6 +256,8 @@ async def echo(_: WhatsApp, msg: Message):
     payment_commit = data.get("payment_confirmation", None)
     if payment_commit:
         await confirm_payment_with_op_api(msg, llm_response, payment_commit, "5513076942")
+    if llm_response and not payment_commit:
+        await msg.reply_text(llm_response)
 
 
 @wa.on_message(filters.contacts)
